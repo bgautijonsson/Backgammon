@@ -7,7 +7,9 @@ Created on Tue Nov 20 15:20:48 2018
 """
 
 from GroupJ import AgentGroupJ
+agent = AgentGroupJ(read_file = False, learning_rate=1e-4, gamma = 0.99)
+agent.SelfPlay(n_envs = 100, n_games = 10000, test_each = 10, test_games = 1)
 
-agent = AgentGroupJ(read_file = False)
 
-agent.SelfPlay(n_envs = 100, n_games = 1000, test_each = 100, test_games = 20)
+
+#agent._s.run(agent._meanwinrate)

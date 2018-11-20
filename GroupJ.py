@@ -9,11 +9,11 @@ import numpy as np
 import Backgammon as B
 import flipped_agent as FA
 import tensorflow as tf
-import keras
-import keras.layers as L
-import matplotlib.pyplot as plt
 import os.path
 import copy
+import tensorflow.layers as L
+from tensorflow.contrib.layers import xavier_initializer
+from tensorflow.contrib.layers import l2_regularizer
 
 class backgammon:
     def __init__(self):
@@ -59,12 +59,33 @@ class backgammon:
     def render(self):
         B.pretty_print(self.board)
 
+def network(inputs):
+    with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
+        net = tf.layers.dropout(inputs, rate=0.2)
+        net = tf.layers.dense(net, 32, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="hidden_1")
+        net = tf.layers.dense(net, 64, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="hidden_2")
+        net = tf.layers.dense(net, 32, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="hidden_3")
+        net = tf.layers.dense(net, 1, name="shared_out")
+    
+    return net
+
+
 class AgentGroupJ:
+    
     def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.1, 
                  read_file = True, save_path = "/AgentData/AC_Agent"):
         
         self._gamma = gamma
-        self._iters = tf.Variable(0, trainable = False)
+        self._iters = tf.Variable(0, dtype = tf.float32, trainable = False)
         self._path = save_path
         
         self._currstates = tf.placeholder("float32", (None, 29), name = "CurrentStates")
@@ -74,21 +95,7 @@ class AgentGroupJ:
         
         # Network
         self._s = tf.Session()
-        self._network = keras.models.Sequential()
-        self._network.add(L.Dropout(0.2))
-        self._network.add(L.Dense(32, 
-                                  kernel_regularizer = keras.regularizers.l2(0.01),
-                                  kernel_initializer = keras.initializers.glorot_normal(seed=None)))
-        self._network.add(L.LeakyReLU())
-        self._network.add(L.Dense(64,
-                                  kernel_regularizer = keras.regularizers.l2(0.01),
-                                  kernel_initializer = keras.initializers.glorot_normal(seed=None)))
-        self._network.add(L.LeakyReLU())
-        self._network.add(L.Dense(32, 
-                                  kernel_regularizer = keras.regularizers.l2(0.01),
-                                  kernel_initializer = keras.initializers.glorot_normal(seed=None)))
-        self._network.add(L.LeakyReLU())
-        self._network.add(L.Dense(1))
+        self._network = network
 
         # Predictions
         ## Critic
@@ -113,9 +120,22 @@ class AgentGroupJ:
 
         self._optimizer = tf.train.AdamOptimizer(learning_rate)
         self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss, global_step = self._iters)
+        
+        
+        self._testgames = tf.Variable(0, trainable = False, dtype = tf.float32)
+        self._meanwinrate = tf.Variable(0, dtype = tf.float32, trainable = False)
+        self._iswin = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin")
+        self._winrate = self._meanwinrate + (self._iswin - self._meanwinrate) / self._testgames
+        tf.summary.scalar('Win_rate', self._winrate)
+        self._merged = tf.summary.merge_all()
+        
         self._s.run(tf.global_variables_initializer())
         
+        self._file_writer = tf.summary.FileWriter("./Tboard",
+                                    tf.get_default_graph())
+        
         self._saver = tf.train.Saver()
+        
         if os.path.isfile(self._path + ".index") and read_file:
             self._saver = tf.train.import_meta_graph(self._path)
             self._saver.restore(self._s)
@@ -131,12 +151,12 @@ class AgentGroupJ:
     
     def update(self, currstates, afterstates, cumulative_rewards, is_terminal):
         
-        self._s.run(self._update, 
+        _, iterations = self._s.run([self._update, self._iters], 
                     ({self._currstates: currstates,
                       self._afterstates: afterstates, 
                       self._is_terminal: is_terminal,
                       self._cumulative_rewards: cumulative_rewards}))
-        if self._s.run(self._iters % 100) == 0:
+        if (iterations % 100) == 0:
             self.save_network()
         
     def get_cumulative_rewards(self, rewards):
@@ -186,7 +206,7 @@ class AgentGroupJ:
 
             while not done:
                 dice = B.roll_dice()
-                for _ in range(1 + int(dice[0] == dice[1])):
+                for __ in range(1 + int(dice[0] == dice[1])):
 
                     possible_moves, possible_boards = env.legal_moves(dice, 1)
                     n_actions = len(possible_moves)
@@ -206,12 +226,13 @@ class AgentGroupJ:
                     for _ in range(1 + int(dice[0] == dice[1])):
                             old_board, new_board, reward, done = env.make_move(dice)
                             if done:
-                                reward = -1
+                                reward = 0
                                 break
 
             wins.append(float(reward == 1))
+            self._s.run(tf.assign(self._testgames, self._testgames + 1))
         
-        return(np.mean(wins))
+        return reward
         
     def PlayOldSelf(self, old_self, test_games = 20):
         wins = []
@@ -259,7 +280,7 @@ class AgentGroupJ:
     
     def SelfPlay(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20, verbose = True):
         
-        win_pct = []
+       # win_pct = []
         played_games = 0
         plot = False
         
@@ -271,7 +292,7 @@ class AgentGroupJ:
 
         active = np.zeros(n_envs, dtype = "int")
         
-        old_self = copy.copy(self)
+        #old_self = copy.copy(self)
         
         while played_games < n_games:
             for i in range(n_envs):
@@ -331,20 +352,28 @@ class AgentGroupJ:
 
                 if (played_games + 1) % test_each == 0 and verbose and plot:
                     plot = False
-                    outcome1 = self.PlayRandomAgent(test_games = test_games)
-                    outcome2 = self.PlayOldSelf(old_self = old_self, test_games = test_games)
-                    old_self = copy.copy(self)
-                    win_pct.append([outcome1, outcome2])
+                    outcome = self.PlayRandomAgent(test_games = test_games)
+                    outcome = float(outcome)
+                    winrate = self._s.run(self._winrate, ({self._iswin: outcome}))
+                    self._s.run(tf.assign(self._meanwinrate, winrate))
+                    #print(winrate)
+                    summary, gstep = self._s.run([self._merged, self._iters],feed_dict = ({self._iswin: outcome}))
+                    self._file_writer.add_summary(summary, gstep)
+                    
+                    
+                    #outcome2 = self.PlayOldSelf(old_self = old_self, test_games = test_games)
+                    #old_self = copy.copy(self)
+                    #win_pct.append([outcome1, outcome2])
                     example = self.ExamplePolicy()
                     #print("Win percentage: %.5f" % (win_pct[-1]))
                     print("Example policy: \n", example)
     
-                    plt.figure()
-                    x = [(n + 1) * test_each for n in range(len(win_pct))]
-                    y = (100*np.vstack(win_pct)).astype('int')
-                    plt.plot(x, y)
-                    plt.legend(["Random Agent", "Old Self"])
-                    plt.xlabel('Episode')
-                    plt.ylabel('Win percentage of last 100 episodes')
-                    plt.ylim(0, 100)
-                    plt.show()  
+                    #plt.figure()
+                    #x = [(n + 1) * test_each for n in range(len(win_pct))]
+                    #y = (100*np.array(win_pct)).astype('int')
+                    #plt.plot(x, y)
+                    #plt.legend(["Random Agent", "Old Self"])
+                    #plt.xlabel('Episode')
+                    #plt.ylabel('Win percentage of last 100 episodes')
+                    #plt.ylim(0, 100)
+                    #plt.show()  
