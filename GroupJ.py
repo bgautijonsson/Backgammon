@@ -171,10 +171,10 @@ class AgentGroupJ:
     def save_network(self):
         self._saver.save(self._s, "." + self._path)
     
-    def PlayRandomAgent(self, n_games = 20):
+    def PlayRandomAgent(self, test_games = 20):
         wins = []
 
-        for _ in range(n_games):
+        for _ in range(test_games):
 
             env = backgammon()
             done = False
@@ -204,14 +204,16 @@ class AgentGroupJ:
                                 reward = -1
                                 break
 
-        wins.append(float(reward == 1))
+            wins.append(float(reward == 1))
         
         return(np.mean(wins))
     
-    def train(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20):
+    def SelfPlay(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20):
+        
         win_pct = []
-        envs = [backgammon() for i in range(n_envs)]
         played_games = 0
+        
+        envs = [backgammon() for i in range(n_envs)]
         currstates = [[[], []] for i in range(n_envs)]
         afterstates = [[[], []] for i in range(n_envs)]
         rewards = [[[], []] for i in range(n_envs)]
@@ -275,7 +277,7 @@ class AgentGroupJ:
 
 
             if (played_games + 1) % test_each == 0:
-                outcome = self.PlayRandomAgent(n_games = test_games)
+                outcome = self.PlayRandomAgent(test_games = test_games)
                 win_pct.append(outcome)
                 example = self.ExamplePolicy()
                 print("Win percentage: %.5f" % (win_pct[-1]))
@@ -289,5 +291,3 @@ class AgentGroupJ:
                 plt.ylabel('Win percentage of last 100 episodes')
                 plt.ylim(0, 100)
                 plt.show()
-                
-                
