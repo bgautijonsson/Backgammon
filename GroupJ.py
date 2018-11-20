@@ -126,6 +126,7 @@ class AgentGroupJ:
         probs = self._s.run(self._actor_policy, ({self._afterstates: states})).flatten()
             
         return np.random.choice(np.arange(len(probs)), p = probs)
+        
     
     def update(self, currstates, afterstates, cumulative_rewards, is_terminal):
         
@@ -158,6 +159,23 @@ class AgentGroupJ:
     
     def save_network(self):
         self._saver.save(self._s, "." + self._path)
+        
+    def legal_moves(self, board, dice, player):
+        moves, boards = B.legal_moves(board = board, dice = dice, player = player)
+        if len(boards) == 0:
+            return [], []
+        boards = np.vstack(boards)
+        return moves, boards
+    
+    ### Function til að skila ###
+    def Action(self, board, dice, player):
+        
+        possible_moves, possible_boards = self.legal_moves(board, dice, player)
+
+        if len(possible_moves) == 0:
+            return []
+
+        return self.sample_action(possible_boards)
     
     def PlayRandomAgent(self, test_games = 20):
         wins = []
