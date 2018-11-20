@@ -13,6 +13,7 @@ import keras
 import keras.layers as L
 import matplotlib.pyplot as plt
 import os.path
+import copy
 
 class backgammon:
     def __init__(self):
@@ -211,6 +212,50 @@ class AgentGroupJ:
             wins.append(float(reward == 1))
         
         return(np.mean(wins))
+        
+    def PlayOldSelf(self, old_self, test_games = 20):
+        wins = []
+    
+        for _ in range(test_games):
+    
+            env = backgammon()
+            done = False
+    
+            while not done:
+                dice = B.roll_dice()
+                for _ in range(1 + int(dice[0] == dice[1])):
+    
+                    possible_moves, possible_boards = env.legal_moves(dice, 1)
+                    n_actions = len(possible_moves)
+    
+                    if n_actions == 0:
+                        break
+    
+                    action = self.sample_action(possible_boards)
+                    old_board, new_board, reward, done = env.step(possible_moves[action])
+    
+                    if done:
+                        break
+    
+                if not done:
+                    dice = B.roll_dice()
+    
+                    for _ in range(1 + int(dice[0] == dice[1])):
+                            possible_moves, possible_boards = env.legal_moves(dice, 1)
+                            n_actions = len(possible_moves)
+            
+                            if n_actions == 0:
+                                break
+            
+                            action = old_self.sample_action(possible_boards)
+                            old_board, new_board, reward, done = env.step(possible_moves[action])
+                            if done:
+                                reward = -1
+                                break
+    
+            wins.append(float(reward == 1))
+        
+        return(np.mean(wins))
     
     def SelfPlay(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20, verbose = True):
         
@@ -226,6 +271,8 @@ class AgentGroupJ:
 
         active = np.zeros(n_envs, dtype = "int")
         
+        old_self = copy.copy(self)
+        
         while played_games < n_games:
             for i in range(n_envs):
                 dice = B.roll_dice()
@@ -237,7 +284,7 @@ class AgentGroupJ:
                     if n_actions == 0:
                         break
 
-
+            
                     action = self.sample_action(possible_boards)
                     old_board, new_board, reward, done = envs[i].step(possible_moves[action], player = 1)
 
@@ -284,16 +331,19 @@ class AgentGroupJ:
 
                 if (played_games + 1) % test_each == 0 and verbose and plot:
                     plot = False
-                    outcome = self.PlayRandomAgent(test_games = test_games)
-                    win_pct.append(outcome)
+                    outcome1 = self.PlayRandomAgent(test_games = test_games)
+                    outcome2 = self.PlayOldSelf(old_self = old_self, test_games = test_games)
+                    old_self = copy.copy(self)
+                    win_pct.append([outcome1, outcome2])
                     example = self.ExamplePolicy()
-                    print("Win percentage: %.5f" % (win_pct[-1]))
+                    #print("Win percentage: %.5f" % (win_pct[-1]))
                     print("Example policy: \n", example)
     
                     plt.figure()
                     x = [(n + 1) * test_each for n in range(len(win_pct))]
-                    y = (100*np.array(win_pct)).astype('int')
+                    y = (100*np.vstack(win_pct)).astype('int')
                     plt.plot(x, y)
+                    plt.legend(["Random Agent", "Old Self"])
                     plt.xlabel('Episode')
                     plt.ylabel('Win percentage of last 100 episodes')
                     plt.ylim(0, 100)
