@@ -7,13 +7,11 @@ perceive the board as player 1
 """
 import numpy as np
 import Backgammon as B
-import agent as A
 import flipped_agent as FA
 import tensorflow as tf
 import keras
 import keras.layers as L
 import matplotlib.pyplot as plt
-import copy
 import os.path
 
 class backgammon:
@@ -172,7 +170,44 @@ class AgentGroupJ:
     
     def save_network(self):
         self._saver.save(self._s, "." + self._path)
+    
+    def PlayRandomAgent(self, n_games = 20):
+        wins = []
+
+        for _ in range(n_games):
+
+            env = backgammon()
+            done = False
+
+            while not done:
+                dice = B.roll_dice()
+                for _ in range(1 + int(dice[0] == dice[1])):
+
+                    possible_moves, possible_boards = env.legal_moves(dice, 1)
+                    n_actions = len(possible_moves)
+
+                    if n_actions == 0:
+                        break
+
+                    action = self.sample_action(possible_boards)
+                    old_board, new_board, reward, done = env.step(possible_moves[action])
+
+                    if done:
+                        break
+
+                if not done:
+                    dice = B.roll_dice()
+
+                    for _ in range(1 + int(dice[0] == dice[1])):
+                            old_board, new_board, reward, done = env.make_move(dice)
+                            if done:
+                                reward = -1
+                                break
+
+        wins.append(float(reward == 1))
         
+        return(np.mean(wins))
+    
     def train(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20):
         win_pct = []
         envs = [backgammon() for i in range(n_envs)]
@@ -196,7 +231,7 @@ class AgentGroupJ:
                         break
 
 
-                    action = player.sample_action(possible_boards)
+                    action = self.sample_action(possible_boards)
                     old_board, new_board, reward, done = envs[i].step(possible_moves[action], player = 1)
 
                     currstates[i][active[i]].append(old_board)
@@ -213,13 +248,13 @@ class AgentGroupJ:
                                                 for player_data in currstates[i]])
                         AfterStates = np.vstack([np.vstack(player_data) 
                                                  for player_data in afterstates[i]])
-                        CumulativeRewards = np.vstack([np.vstack(player.get_cumulative_rewards(player_data)) 
+                        CumulativeRewards = np.vstack([np.vstack(self.get_cumulative_rewards(player_data)) 
                                                        for player_data in rewards[i]])
                         IsTerminal = np.vstack([np.vstack(player_data) 
                                                 for player_data in is_terminal[i]])
 
 
-                        player.update(currstates = CurrStates, 
+                        self.update(currstates = CurrStates, 
                                       afterstates = AfterStates, 
                                       cumulative_rewards = CumulativeRewards,
                                       is_terminal = IsTerminal)
@@ -240,10 +275,9 @@ class AgentGroupJ:
 
 
             if (played_games + 1) % test_each == 0:
-                outcome = PlayRandomAgent(player, n_games = test_games)
+                outcome = self.PlayRandomAgent(n_games = test_games)
                 win_pct.append(outcome)
-                example = player.ExamplePolicy()
-                clear_output(True)
+                example = self.ExamplePolicy()
                 print("Win percentage: %.5f" % (win_pct[-1]))
                 print("Example policy: \n", example)
 
@@ -255,3 +289,5 @@ class AgentGroupJ:
                 plt.ylabel('Win percentage of last 100 episodes')
                 plt.ylim(0, 100)
                 plt.show()
+                
+                
