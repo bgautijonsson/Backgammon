@@ -51,18 +51,6 @@ class backgammon:
             reward = player
             self.done = True
         return old_board, np.copy(self.board), reward, self.done
-    
-    def symbolic_step(self, move):
-        board = np.copy(self.board)
-        if len(move) != 0:
-            for m in move:
-                board = B.update_board(board = board, move = m, player = 1)
-        reward = 0
-        done = False
-        if B.game_over(board):
-            reward = 1
-            done = True
-        return board, reward, self.done
         
     def iswin(self):
         return B.game_over(self.board)
@@ -71,7 +59,7 @@ class backgammon:
         B.pretty_print(self.board)
 
 class AgentGroupJ:
-    def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.01, 
+    def __init__(self, gamma = 0.99, learning_rate = 0.00005, entropy = 0.01, 
                  read_file = True, save_path = "/AgentData/AC_BGJ"):
         
         self._gamma = gamma
