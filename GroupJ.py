@@ -59,11 +59,11 @@ class backgammon:
         B.pretty_print(self.board)
 
 class AgentGroupJ:
-    def __init__(self, gamma = 0.99, learning_rate = 0.00005, entropy = 0.01, 
-                 read_file = True, save_path = "/AgentData/AC_BGJ"):
+    def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.1, 
+                 read_file = True, save_path = "/AgentData/AC_Agent"):
         
         self._gamma = gamma
-        self._iters = 0
+        self._iters = tf.Variable(0, trainable = False)
         self._path = save_path
         
         self._currstates = tf.placeholder("float32", (None, 29), name = "CurrentStates")
@@ -111,13 +111,13 @@ class AgentGroupJ:
         self._actor_loss -= entropy * self._actor_entropy
 
         self._optimizer = tf.train.AdamOptimizer(learning_rate)
-        self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss)
+        self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss, global_step = self._iters)
         self._s.run(tf.global_variables_initializer())
         
         self._saver = tf.train.Saver()
         if os.path.isfile(self._path + ".index") and read_file:
             self._saver = tf.train.import_meta_graph(self._path)
-            self._saver.restore(self._s, tf.train.latest_checkpoint("./"))
+            self._saver.restore(self._s)
             
     def __delete__(self):
         self._s.close()    
@@ -135,9 +135,7 @@ class AgentGroupJ:
                       self._afterstates: afterstates, 
                       self._is_terminal: is_terminal,
                       self._cumulative_rewards: cumulative_rewards}))
-        self._iters += 1
-        
-        if self._iters % 1000 == 0:
+        if self._s.run(self._iters % 100) == 0:
             self.save_network()
         
     def get_cumulative_rewards(self, rewards):
@@ -214,10 +212,11 @@ class AgentGroupJ:
         
         return(np.mean(wins))
     
-    def SelfPlay(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20):
+    def SelfPlay(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20, verbose = True):
         
         win_pct = []
         played_games = 0
+        plot = False
         
         envs = [backgammon() for i in range(n_envs)]
         currstates = [[[], []] for i in range(n_envs)]
@@ -226,7 +225,7 @@ class AgentGroupJ:
         is_terminal = [[[], []] for i in range(n_envs)]
 
         active = np.zeros(n_envs, dtype = "int")
-
+        
         while played_games < n_games:
             for i in range(n_envs):
                 dice = B.roll_dice()
@@ -274,6 +273,7 @@ class AgentGroupJ:
                         is_terminal[i] = [[], []]
 
                         played_games += 1
+                        plot = True
 
                         break
                     else:
@@ -282,18 +282,19 @@ class AgentGroupJ:
                     active[i] = (active[i] + 1) % 2
 
 
-            if (played_games + 1) % test_each == 0:
-                outcome = self.PlayRandomAgent(test_games = test_games)
-                win_pct.append(outcome)
-                example = self.ExamplePolicy()
-                print("Win percentage: %.5f" % (win_pct[-1]))
-                print("Example policy: \n", example)
-
-                plt.figure()
-                x = [(n + 1) * test_each for n in range(len(win_pct))]
-                y = (100*np.array(win_pct)).astype('int')
-                plt.plot(x, y)
-                plt.xlabel('Episode')
-                plt.ylabel('Win percentage of last 100 episodes')
-                plt.ylim(0, 100)
-                plt.show()
+                if (played_games + 1) % test_each == 0 and verbose and plot:
+                    plot = False
+                    outcome = self.PlayRandomAgent(test_games = test_games)
+                    win_pct.append(outcome)
+                    example = self.ExamplePolicy()
+                    print("Win percentage: %.5f" % (win_pct[-1]))
+                    print("Example policy: \n", example)
+    
+                    plt.figure()
+                    x = [(n + 1) * test_each for n in range(len(win_pct))]
+                    y = (100*np.array(win_pct)).astype('int')
+                    plt.plot(x, y)
+                    plt.xlabel('Episode')
+                    plt.ylabel('Win percentage of last 100 episodes')
+                    plt.ylim(0, 100)
+                    plt.show()  
