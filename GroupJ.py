@@ -11,9 +11,9 @@ import flipped_agent as FA
 import tensorflow as tf
 import os.path
 import copy
-import tensorflow.layers as L
 from tensorflow.contrib.layers import xavier_initializer
 from tensorflow.contrib.layers import l2_regularizer
+import pubeval
 
 class backgammon:
     def __init__(self):
@@ -122,10 +122,10 @@ class AgentGroupJ:
         self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss, global_step = self._iters)
         
         
-        self._testgames = tf.Variable(0, trainable = False, dtype = tf.float32)
+        self._winrate_lookbehind = tf.Variable(100, dtype = tf.float32, trainable = False)
         self._meanwinrate = tf.Variable(0, dtype = tf.float32, trainable = False)
         self._iswin = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin")
-        self._winrate = self._meanwinrate + (self._iswin - self._meanwinrate) / self._testgames
+        self._winrate = self._meanwinrate + (self._iswin - self._meanwinrate) / self._winrate_lookbehind
         tf.summary.scalar('Win_rate', self._winrate)
         self._merged = tf.summary.merge_all()
         
@@ -180,7 +180,9 @@ class AgentGroupJ:
         self._saver.save(self._s, "." + self._path)
         
     def legal_moves(self, board, dice, player):
-        moves, boards = B.legal_moves(board = board, dice = dice, player = player)
+        if player == -1:
+            board = FA.flip_board(np.copy(board))
+        moves, boards = B.legal_moves(board = board, dice = dice, player = 1)
         if len(boards) == 0:
             return [], []
         boards = np.vstack(boards)
@@ -196,7 +198,7 @@ class AgentGroupJ:
 
         return self.sample_action(possible_boards)
     
-    def PlayRandomAgent(self, test_games = 20):
+    def PlayRandomAgent(self, test_games = 1):
         wins = []
 
         for _ in range(test_games):
@@ -230,11 +232,10 @@ class AgentGroupJ:
                                 break
 
             wins.append(float(reward == 1))
-            self._s.run(tf.assign(self._testgames, self._testgames + 1))
         
         return reward
         
-    def PlayOldSelf(self, old_self, test_games = 20):
+    def PlayOldSelf(self, old_self, test_games = 1):
         wins = []
     
         for _ in range(test_games):
@@ -274,6 +275,47 @@ class AgentGroupJ:
                                 reward = -1
                                 break
     
+            wins.append(float(reward == 1))
+        
+        return(np.mean(wins))
+        
+    def PlayPubEval(self, test_games = 1):
+        wins = []
+    
+        for _ in range(test_games):
+    
+            env = backgammon()
+            done = False
+    
+            while not done:
+                dice = B.roll_dice()
+                for _ in range(1 + int(dice[0] == dice[1])):
+    
+                    possible_moves, possible_boards = env.legal_moves(dice, 1)
+                    n_actions = len(possible_moves)
+    
+                    if n_actions == 0:
+                        break
+    
+                    action = self.sample_action(possible_boards)
+                    old_board, new_board, reward, done = env.step(possible_moves[action])
+    
+                    if done:
+                        break
+    
+                if not done:
+                    dice = B.roll_dice()
+    
+                    for _ in range(1 + int(dice[0] == dice[1])):
+                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = 1)
+                            old_board, new_board, reward, done = env.step(action)
+                            if done:
+                                reward = -1
+                                break
+                
+                if B.check_for_error(env.board):
+                    print("Found error")
+                    PubEvalErBilað
             wins.append(float(reward == 1))
         
         return(np.mean(wins))
@@ -352,7 +394,8 @@ class AgentGroupJ:
 
                 if (played_games + 1) % test_each == 0 and verbose and plot:
                     plot = False
-                    outcome = self.PlayRandomAgent(test_games = test_games)
+                    #outcome = self.PlayRandomAgent(test_games = test_games)
+                    outcome = self.PlayPubEval(test_games = 1)
                     outcome = float(outcome)
                     winrate = self._s.run(self._winrate, ({self._iswin: outcome}))
                     self._s.run(tf.assign(self._meanwinrate, winrate))
