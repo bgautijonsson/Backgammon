@@ -61,8 +61,7 @@ class backgammon:
 
 def network(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        net = tf.layers.dropout(inputs, rate=0.2)
-        net = tf.layers.dense(net, 32, activation=tf.nn.leaky_relu,
+        net = tf.layers.dense(inputs, 32, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_1")
@@ -74,9 +73,28 @@ def network(inputs):
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_3")
-        net = tf.layers.dense(net, 1, name="shared_out")
-    
+        
     return net
+
+def critic(inputs):
+    with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
+        critic = tf.layers.dense(inputs, 16, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="critic_hidden_1")
+        critic = tf.layers.dense(critic, 1, name="critic_out")
+        
+    return critic
+
+def actor(inputs):
+    with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
+        critic = tf.layers.dense(inputs, 16, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="actor_hidden_1")
+        critic = tf.layers.dense(critic, 1, name="actor_out")
+        
+    return critic
 
 
 class AgentGroupJ:
@@ -96,11 +114,13 @@ class AgentGroupJ:
         # Network
         self._s = tf.Session()
         self._network = network
+        self._actor = actor
+        self._critic = critic
 
         # Predictions
         ## Critic
-        self._current_state_values = tf.nn.tanh(self._network(self._currstates))
-        self._afterstate_values = tf.nn.tanh(self._network(self._afterstates)) * (1 - self._is_terminal)
+        self._current_state_values = tf.nn.tanh(self._critic(self._network(self._currstates)))
+        self._afterstate_values = tf.nn.tanh(self._critic(self._network(self._afterstates))) * (1 - self._is_terminal)
 
         self._target_state_values = self._cumulative_rewards
         self._target_state_values += self._gamma * self._afterstate_values * (1 - self._is_terminal)
@@ -108,7 +128,7 @@ class AgentGroupJ:
         self._advantage = self._target_state_values - self._current_state_values
 
         ## Actor
-        self._actor_logits = self._network(self._afterstates)
+        self._actor_logits = self._actor(self._network(self._afterstates))
         self._actor_policy = tf.nn.softmax(self._actor_logits, axis = 0)
         self._actor_log_policy = tf.nn.log_softmax(self._actor_logits, axis = 0)
         self._actor_entropy = -tf.reduce_sum(self._actor_policy * self._actor_log_policy)
