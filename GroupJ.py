@@ -10,10 +10,10 @@ import Backgammon as B
 import flipped_agent as FA
 import tensorflow as tf
 import os.path
-import copy
 from tensorflow.contrib.layers import xavier_initializer
 from tensorflow.contrib.layers import l2_regularizer
 import pubeval
+from datetime import datetime
 
 class backgammon:
     def __init__(self):
@@ -82,7 +82,7 @@ def critic(inputs):
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="critic_hidden_1")
-        critic = tf.layers.dense(critic, 1, name="critic_out", activation = tf.nn.tanh)
+        critic = tf.layers.dense(critic, 1, name="critic_out")
         
     return critic
 
@@ -99,7 +99,7 @@ def actor(inputs):
 
 class AgentGroupJ:
     
-    def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.1, 
+    def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.1, critic_weight = 0.8,
                  read_file = True, save_path = "/AgentData/AC_Agent"):
         
         self._gamma = gamma
@@ -136,11 +136,19 @@ class AgentGroupJ:
         
         # Losses
         self._critic_loss = tf.reduce_mean(tf.square((tf.stop_gradient(self._target_state_value) - self._current_state_value)))
-        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * tf.stop_gradient(self._action) * self._actor_log_policy)
+        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * self._action * self._actor_log_policy)
+
+        self._loss = self._actor_loss + critic_weight * self._critic_loss - entropy * self._actor_entropy
+        self._weights = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='Shared')
+        
+        self._grads = tf.gradients(self._loss, self._weights)
+        self._grads, _ = tf.clip_by_global_norm(self._grads, 40.0)
+        self._grads_vars = list(zip(self._grads, self._weights))
+
 
         self._optimizer = tf.train.AdamOptimizer(learning_rate)
-        self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss - entropy * self._actor_entropy, 
-                                                global_step = self._iters)
+        self._update = self._optimizer.apply_gradients(self._grads_vars, global_step = self._iters)
+        
         
         
         self._winrate_lookbehind = tf.Variable(100, dtype = tf.float32, trainable = False)
@@ -164,7 +172,10 @@ class AgentGroupJ:
         
         self._s.run(tf.global_variables_initializer())
         
-        self._file_writer = tf.summary.FileWriter("./Tboard",
+        
+        now = datetime.now()
+        logdir = "./Tboard/" + now.strftime("%Y%m%d-%H%M%S") + "/"
+        self._file_writer = tf.summary.FileWriter(logdir,
                                     tf.get_default_graph())
         
         self._saver = tf.train.Saver()
@@ -277,50 +288,6 @@ class AgentGroupJ:
         
         return reward
         
-    def PlayOldSelf(self, old_self, test_games = 1):
-        wins = []
-    
-        for _ in range(test_games):
-    
-            env = backgammon()
-            done = False
-    
-            while not done:
-                dice = B.roll_dice()
-                for _ in range(1 + int(dice[0] == dice[1])):
-    
-                    possible_moves, possible_boards = env.legal_moves(dice, 1)
-                    n_actions = len(possible_moves)
-    
-                    if n_actions == 0:
-                        break
-    
-                    action = self.sample_action(possible_boards)
-                    old_board, new_board, reward, done = env.step(possible_moves[action])
-    
-                    if done:
-                        break
-    
-                if not done:
-                    dice = B.roll_dice()
-    
-                    for _ in range(1 + int(dice[0] == dice[1])):
-                            possible_moves, possible_boards = env.legal_moves(dice, 1)
-                            n_actions = len(possible_moves)
-            
-                            if n_actions == 0:
-                                break
-            
-                            action = old_self.sample_action(possible_boards)
-                            old_board, new_board, reward, done = env.step(possible_moves[action])
-                            if done:
-                                reward = -1
-                                break
-    
-            wins.append(float(reward == 1))
-        
-        return(np.mean(wins))
-        
     def PlayPubEval(self, test_games = 1):
         wins = []
     
@@ -352,7 +319,7 @@ class AgentGroupJ:
                             action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = -1)
                             old_board, new_board, reward, done = env.step(action, player = -1)
                             if done:
-                                reward = -1
+                                reward = 0
                                 break
             wins.append(float(reward == 1))
         
