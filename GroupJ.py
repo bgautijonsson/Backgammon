@@ -145,18 +145,23 @@ class AgentGroupJ:
         
         
         self._winrate_lookbehind = tf.Variable(100, dtype = tf.float32, trainable = False)
-        self._meanwinrate = tf.Variable(0, dtype = tf.float32, trainable = False)
-        self._iswin = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin")
-        self._winrate = self._meanwinrate + (self._iswin - self._meanwinrate) / self._winrate_lookbehind
         
-        self._track_winrate = tf.summary.scalar('Win_rate', self._winrate)
+        self._meanwinrate_random = tf.Variable(0, dtype = tf.float32, trainable = False)
+        self._iswin_random = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin_random")
+        self._winrate_random = self._meanwinrate_random + (self._iswin_random - self._meanwinrate_random) / self._winrate_lookbehind
+        self._track_random = tf.summary.scalar('Win_rate_Random', self._winrate_random)
+        
+        self._meanwinrate_pubeval = tf.Variable(0, dtype = tf.float32, trainable = False)
+        self._iswin_pubeval = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin_pubeval")
+        self._winrate_pubeval = self._meanwinrate_pubeval + (self._iswin_pubeval - self._meanwinrate_pubeval) / self._winrate_lookbehind
+        self._track_pubeval = tf.summary.scalar('Win_rate_Pubeval', self._winrate_pubeval)
         
         self._c_loss = tf.summary.scalar('Critic_error', self._critic_loss)
         self._a_loss = tf.summary.scalar('Actor_error', self._actor_loss)
         self._a_entr = tf.summary.scalar('Entropy', self._actor_entropy)
         
         self._summary_losses = tf.summary.merge([self._c_loss, self._a_loss, self._a_entr])
-        self._summary_winrate = tf.summary.merge([self._track_winrate])
+        self._summary_winrate = tf.summary.merge([self._track_random, self._track_pubeval])
         
         self._s.run(tf.global_variables_initializer())
         
@@ -425,14 +430,20 @@ class AgentGroupJ:
 
                 if (played_games + 1) % test_each == 0 and verbose and show:
                     show = False
-                    outcome = self.PlayRandomAgent(test_games = test_games)
-                    #outcome = self.PlayPubEval(test_games = 1)
-                    outcome = float(outcome)
-                    winrate = self._s.run(self._winrate, ({self._iswin: outcome}))
-                    self._s.run(tf.assign(self._meanwinrate, winrate))
-                    summary, gstep = self._s.run([self._summary_winrate, self._iters],feed_dict = ({self._iswin: outcome}))
+                    outcome_random = float(self.PlayRandomAgent(test_games = test_games))
+                    outcome_pubeval = float(self.PlayPubEval(test_games = 1))
+                    
+                    winrate_random, winrate_pubeval = self._s.run(self._winrate_random,
+                                                                  self._winrate_pubeval, 
+                                                                  ({self._iswin_random: outcome_random,
+                                                                    self._iswin_pubeval: outcome_pubeval}))
+    
+                    self._s.run([tf.assign(self._meanwinrate_random, winrate_random),
+                                 tf.assign(self._meanwinrate_pubeval, winrate_pubeval)])
+    
+                    summary, gstep = self._s.run([self._summary_winrate, self._iters],
+                                                 feed_dict = ({self._iswin_random: outcome_random, 
+                                                               self._iswin_pubeval: outcome_pubeval}))
                     self._file_writer.add_summary(summary, gstep)
                     
                     
-                    #example = self.ExamplePolicy()
-                    #print("Example policy: \n", example)
