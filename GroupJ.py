@@ -82,7 +82,7 @@ def critic(inputs):
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="critic_hidden_1")
-        critic = tf.layers.dense(critic, 1, name="critic_out")
+        critic = tf.layers.dense(critic, 1, name="critic_out", activation = tf.nn.tanh)
         
     return critic
 
@@ -121,11 +121,10 @@ class AgentGroupJ:
 
         # Predictions
         ## Critic
-        self._current_state_value = tf.nn.tanh(self._critic(self._network(self._currstate)))
-        self._afterstate_value = tf.nn.tanh(self._critic(self._network(self._afterstate))) * (1 - self._is_terminal)
+        self._current_state_value = self._critic(self._network(self._currstate))
+        self._afterstate_value = self._critic(self._network(self._afterstate)) * (1 - self._is_terminal)
 
-        self._target_state_value = self._reward
-        self._target_state_value += self._gamma * self._afterstate_value * (1 - self._is_terminal)
+        self._target_state_value = self._reward + self._gamma * self._afterstate_value * (1 - self._is_terminal)
 
         self._advantage = self._target_state_value - self._current_state_value
 
@@ -137,10 +136,10 @@ class AgentGroupJ:
         
         # Losses
         self._critic_loss = tf.reduce_mean(tf.square((tf.stop_gradient(self._target_state_value) - self._current_state_value)))
-        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * self._action * self._actor_log_policy)
+        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * tf.stop_gradient(self._action) * self._actor_log_policy)
 
         self._optimizer = tf.train.AdamOptimizer(learning_rate)
-        self._update = self._optimizer.minimize(self._actor_loss + 0.7 * self._critic_loss - entropy * entropy * self._actor_entropy, 
+        self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss - entropy * self._actor_entropy, 
                                                 global_step = self._iters)
         
         
@@ -407,7 +406,7 @@ class AgentGroupJ:
                         AfterState_loser[i] = new_board.reshape(1, 29)
                         PossibleStates_loser[i] = possible_boards
                         Reward_loser[i] = -1
-                        IsTerminal_loser[i] = done
+                        IsTerminal_loser[i] = 1
                         Action_loser[i] = np.zeros(n_actions)
                         Action_loser[i][action] = 1
                         
