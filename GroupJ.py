@@ -88,13 +88,13 @@ def critic(inputs):
 
 def actor(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        critic = tf.layers.dense(inputs, 16, activation=tf.nn.leaky_relu,
+        actor = tf.layers.dense(inputs, 16, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="actor_hidden_1")
-        critic = tf.layers.dense(critic, 1, name="actor_out")
+        actor = tf.layers.dense(actor, 1, name="actor_out")
         
-    return critic
+    return actor
 
 
 class AgentGroupJ:
@@ -106,10 +106,12 @@ class AgentGroupJ:
         self._iters = tf.Variable(0, dtype = tf.float32, trainable = False)
         self._path = save_path
         
-        self._currstates = tf.placeholder("float32", (None, 29), name = "CurrentStates")
-        self._afterstates = tf.placeholder("float32", (None, 29), name = "AfterStates")
-        self._is_terminal = tf.placeholder("float32", (None, 1), name = "IsTerminal")
-        self._cumulative_rewards = tf.placeholder("float32", (None, 1), name = "Rewards")
+        self._currstate = tf.placeholder("float32", (None, 29), name = "CurrentStates")
+        self._possible_states = tf.placeholder("float32", (None, 29), name = "PossibleStates")
+        self._afterstate = tf.placeholder("float32", (None, 29), name = "AfterStates")
+        self._is_terminal = tf.placeholder("float32", (), name = "IsTerminal")
+        self._reward = tf.placeholder("float32", (), name = "Rewards")
+        self._action = tf.placeholder("float32", (None, ), name = "Action")
         
         # Network
         self._s = tf.Session()
@@ -119,35 +121,42 @@ class AgentGroupJ:
 
         # Predictions
         ## Critic
-        self._current_state_values = tf.nn.tanh(self._critic(self._network(self._currstates)))
-        self._afterstate_values = tf.nn.tanh(self._critic(self._network(self._afterstates))) * (1 - self._is_terminal)
+        self._current_state_value = tf.nn.tanh(self._critic(self._network(self._currstate)))
+        self._afterstate_value = tf.nn.tanh(self._critic(self._network(self._afterstate))) * (1 - self._is_terminal)
 
-        self._target_state_values = self._cumulative_rewards
-        self._target_state_values += self._gamma * self._afterstate_values * (1 - self._is_terminal)
+        self._target_state_value = self._reward
+        self._target_state_value += self._gamma * self._afterstate_value * (1 - self._is_terminal)
 
-        self._advantage = self._target_state_values - self._current_state_values
+        self._advantage = self._target_state_value - self._current_state_value
 
         ## Actor
-        self._actor_logits = self._actor(self._network(self._afterstates))
+        self._actor_logits = self._actor(self._network(self._possible_states))
         self._actor_policy = tf.nn.softmax(self._actor_logits, axis = 0)
         self._actor_log_policy = tf.nn.log_softmax(self._actor_logits, axis = 0)
-        self._actor_entropy = -tf.reduce_sum(self._actor_policy * self._actor_log_policy)
-
+        self._actor_entropy = -tf.reduce_mean(self._actor_policy * self._actor_log_policy)
+        
         # Losses
-        self._critic_loss = -tf.reduce_sum(tf.stop_gradient(self._advantage) * self._current_state_values)
-        self._actor_loss = -tf.reduce_sum(tf.stop_gradient(self._advantage) * self._actor_log_policy)
-        self._actor_loss -= entropy * self._actor_entropy
+        self._critic_loss = tf.reduce_mean(tf.square((tf.stop_gradient(self._target_state_value) - self._current_state_value)))
+        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * self._action * self._actor_log_policy)
 
         self._optimizer = tf.train.AdamOptimizer(learning_rate)
-        self._update = self._optimizer.minimize(self._actor_loss + self._critic_loss, global_step = self._iters)
+        self._update = self._optimizer.minimize(self._actor_loss + 0.7 * self._critic_loss - entropy * entropy * self._actor_entropy, 
+                                                global_step = self._iters)
         
         
         self._winrate_lookbehind = tf.Variable(100, dtype = tf.float32, trainable = False)
         self._meanwinrate = tf.Variable(0, dtype = tf.float32, trainable = False)
         self._iswin = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin")
         self._winrate = self._meanwinrate + (self._iswin - self._meanwinrate) / self._winrate_lookbehind
-        tf.summary.scalar('Win_rate', self._winrate)
-        self._merged = tf.summary.merge_all()
+        
+        self._track_winrate = tf.summary.scalar('Win_rate', self._winrate)
+        
+        self._c_loss = tf.summary.scalar('Critic_error', self._critic_loss)
+        self._a_loss = tf.summary.scalar('Actor_error', self._actor_loss)
+        self._a_entr = tf.summary.scalar('Entropy', self._actor_entropy)
+        
+        self._summary_losses = tf.summary.merge([self._c_loss, self._a_loss, self._a_entr])
+        self._summary_winrate = tf.summary.merge([self._track_winrate])
         
         self._s.run(tf.global_variables_initializer())
         
@@ -163,20 +172,29 @@ class AgentGroupJ:
     def __delete__(self):
         self._s.close()    
         
-    def sample_action(self, states):
-        probs = self._s.run(self._actor_policy, ({self._afterstates: states})).flatten()
-            
-        return np.random.choice(np.arange(len(probs)), p = probs)
+    def sample_action(self, afterstates):
+        probs = self._s.run(self._actor_policy, ({self._possible_states: afterstates})).flatten()
+        
+        action = np.random.choice(np.arange(len(probs)), p = probs)
+        
+        return action
         
     
-    def update(self, currstates, afterstates, cumulative_rewards, is_terminal):
+    def update(self, currstate, possible_states, afterstate, reward, action, is_terminal):
         
-        _, iterations = self._s.run([self._update, self._iters], 
-                    ({self._currstates: currstates,
-                      self._afterstates: afterstates, 
+        
+        
+        _, gstep, summary = self._s.run([self._update, self._iters, self._summary_losses], 
+                    ({self._currstate: currstate,
+                      self._possible_states: possible_states,
+                      self._afterstate: afterstate, 
                       self._is_terminal: is_terminal,
-                      self._cumulative_rewards: cumulative_rewards}))
-        if (iterations % 100) == 0:
+                      self._reward: reward,
+                      self._action: action}))
+    
+        self._file_writer.add_summary(summary, gstep)
+        
+        if (gstep % 1000) == 0:
             self.save_network()
         
     def get_cumulative_rewards(self, rewards):
@@ -188,7 +206,7 @@ class AgentGroupJ:
     def ExamplePolicy(self):
         _, st = B.legal_moves(B.init_board(), B.roll_dice(), 1)
         
-        out = np.round(self._s.run(self._actor_policy, ({self._afterstates: st})) * 100)/100
+        out = np.round(self._s.run(self._actor_policy, ({self._possible_states: st})) * 100)/100
         out = out.flatten()
         out.sort()
         return out[::-1]
@@ -326,35 +344,29 @@ class AgentGroupJ:
                 if not done:
                     dice = B.roll_dice()
     
-                    for _ in range(1 + int(dice[0] == dice[1])):
-                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = 1)
-                            old_board, new_board, reward, done = env.step(action)
+                    for __ in range(1 + int(dice[0] == dice[1])):
+                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = -1)
+                            old_board, new_board, reward, done = env.step(action, player = -1)
                             if done:
                                 reward = -1
                                 break
-                
-                if B.check_for_error(env.board):
-                    print("Found error")
-                    PubEvalErBilað
             wins.append(float(reward == 1))
         
         return(np.mean(wins))
     
     def SelfPlay(self, n_envs = 10, n_games = 1000, test_each = 100, test_games = 20, verbose = True):
         
-       # win_pct = []
         played_games = 0
-        plot = False
+        show = False
         
         envs = [backgammon() for i in range(n_envs)]
-        currstates = [[[], []] for i in range(n_envs)]
-        afterstates = [[[], []] for i in range(n_envs)]
-        rewards = [[[], []] for i in range(n_envs)]
-        is_terminal = [[[], []] for i in range(n_envs)]
-
-        active = np.zeros(n_envs, dtype = "int")
         
-        #old_self = copy.copy(self)
+        CurrState_loser = [[] for i in range(n_envs)]
+        AfterState_loser = [[] for i in range(n_envs)]
+        PossibleStates_loser = [[] for i in range(n_envs)]
+        Reward_loser = [[] for i in range(n_envs)]
+        IsTerminal_loser = [[] for i in range(n_envs)]
+        Action_loser = [[] for i in range(n_envs)]
         
         while played_games < n_games:
             for i in range(n_envs):
@@ -370,73 +382,57 @@ class AgentGroupJ:
             
                     action = self.sample_action(possible_boards)
                     old_board, new_board, reward, done = envs[i].step(possible_moves[action], player = 1)
-
-                    currstates[i][active[i]].append(old_board)
-                    rewards[i][active[i]].append(reward)
-                    afterstates[i][active[i]].append(new_board)
-
-                    if done:
-                        rewards[i][(active[i] + 1) % 2][-1] = -1
-
-                        is_terminal[i][active[i]].append(1)
-                        is_terminal[i][(active[i] + 1) % 2][-1] = 1
-
-                        CurrStates = np.vstack([np.vstack(player_data) 
-                                                for player_data in currstates[i]])
-                        AfterStates = np.vstack([np.vstack(player_data) 
-                                                 for player_data in afterstates[i]])
-                        CumulativeRewards = np.vstack([np.vstack(self.get_cumulative_rewards(player_data)) 
-                                                       for player_data in rewards[i]])
-                        IsTerminal = np.vstack([np.vstack(player_data) 
-                                                for player_data in is_terminal[i]])
-
-
-                        self.update(currstates = CurrStates, 
-                                      afterstates = AfterStates, 
-                                      cumulative_rewards = CumulativeRewards,
-                                      is_terminal = IsTerminal)
-
+                    
+                    CurrState = old_board.reshape(1, 29)
+                    AfterState = new_board.reshape(1, 29)
+                    PossibleStates = possible_boards
+                    Reward = reward
+                    IsTerminal = done
+                    Action = np.zeros(n_actions)
+                    Action[action] = 1
+                    
+                    self.update(currstate = CurrState, 
+                                afterstate = AfterState, 
+                                possible_states = PossibleStates,
+                                reward = Reward,
+                                action = Action,
+                                is_terminal = IsTerminal)
+                    if not done:
+                        CurrState_loser[i] = old_board.reshape(1, 29)
+                        AfterState_loser[i] = new_board.reshape(1, 29)
+                        PossibleStates_loser[i] = possible_boards
+                        Reward_loser[i] = -1
+                        IsTerminal_loser[i] = done
+                        Action_loser[i] = np.zeros(n_actions)
+                        Action_loser[i][action] = 1
+                        
+                    else:
+                        self.update(currstate = CurrState_loser[i], 
+                                afterstate = AfterState_loser[i], 
+                                possible_states = PossibleStates_loser[i],
+                                reward = Reward_loser[i],
+                                action = Action_loser[i],
+                                is_terminal = IsTerminal_loser[i])
+    
                         envs[i] = backgammon()
-                        currstates[i] = [[], []]
-                        afterstates[i] = [[], []]
-                        rewards[i] = [[], []]
-                        is_terminal[i] = [[], []]
 
                         played_games += 1
-                        plot = True
-
+                        show = True
                         break
-                    else:
-                        is_terminal[i][active[i]].append(0)
+                    
                     envs[i].swap_player()
-                    active[i] = (active[i] + 1) % 2
 
 
-                if (played_games + 1) % test_each == 0 and verbose and plot:
-                    plot = False
-                    #outcome = self.PlayRandomAgent(test_games = test_games)
-                    outcome = self.PlayPubEval(test_games = 1)
+                if (played_games + 1) % test_each == 0 and verbose and show:
+                    show = False
+                    outcome = self.PlayRandomAgent(test_games = test_games)
+                    #outcome = self.PlayPubEval(test_games = 1)
                     outcome = float(outcome)
                     winrate = self._s.run(self._winrate, ({self._iswin: outcome}))
                     self._s.run(tf.assign(self._meanwinrate, winrate))
-                    #print(winrate)
-                    summary, gstep = self._s.run([self._merged, self._iters],feed_dict = ({self._iswin: outcome}))
+                    summary, gstep = self._s.run([self._summary_winrate, self._iters],feed_dict = ({self._iswin: outcome}))
                     self._file_writer.add_summary(summary, gstep)
                     
                     
-                    #outcome2 = self.PlayOldSelf(old_self = old_self, test_games = test_games)
-                    #old_self = copy.copy(self)
-                    #win_pct.append([outcome1, outcome2])
-                    example = self.ExamplePolicy()
-                    #print("Win percentage: %.5f" % (win_pct[-1]))
-                    print("Example policy: \n", example)
-    
-                    #plt.figure()
-                    #x = [(n + 1) * test_each for n in range(len(win_pct))]
-                    #y = (100*np.array(win_pct)).astype('int')
-                    #plt.plot(x, y)
-                    #plt.legend(["Random Agent", "Old Self"])
-                    #plt.xlabel('Episode')
-                    #plt.ylabel('Win percentage of last 100 episodes')
-                    #plt.ylim(0, 100)
-                    #plt.show()  
+                    #example = self.ExamplePolicy()
+                    #print("Example policy: \n", example)
