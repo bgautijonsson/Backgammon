@@ -433,17 +433,17 @@ class AgentGroupJ:
                     outcome_random = float(self.PlayRandomAgent(test_games = test_games))
                     outcome_pubeval = float(self.PlayPubEval(test_games = 1))
                     
-                    winrate_random, winrate_pubeval = self._s.run(self._winrate_random,
-                                                                  self._winrate_pubeval, 
-                                                                  ({self._iswin_random: outcome_random,
+                    winrate_random, winrate_pubeval, summary, gstep = self._s.run([self._winrate_random, self._winrate_pubeval,
+                                                                                   self._summary_winrate, self._iters], 
+                                                                  ({self._iswin_random: outcome_random, 
                                                                     self._iswin_pubeval: outcome_pubeval}))
     
                     self._s.run([tf.assign(self._meanwinrate_random, winrate_random),
                                  tf.assign(self._meanwinrate_pubeval, winrate_pubeval)])
     
-                    summary, gstep = self._s.run([self._summary_winrate, self._iters],
-                                                 feed_dict = ({self._iswin_random: outcome_random, 
-                                                               self._iswin_pubeval: outcome_pubeval}))
+                    #summary, gstep = self._s.run([self._summary_winrate, self._iters],
+                    #                             feed_dict = ({self._iswin_random: outcome_random, 
+                    #                                           self._iswin_pubeval: outcome_pubeval}))
                     self._file_writer.add_summary(summary, gstep)
                     
                     
