@@ -61,11 +61,11 @@ class backgammon:
 
 def network(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        net = tf.layers.dense(inputs, 256, activation=tf.nn.leaky_relu,
+        net = tf.layers.dense(inputs, 32, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_1")
-        net = tf.layers.dense(net, 128, activation=tf.nn.leaky_relu,
+        net = tf.layers.dense(net, 64, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_2")
@@ -78,11 +78,11 @@ def network(inputs):
 
 def critic(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        critic = tf.layers.dense(inputs, 64, activation=tf.nn.leaky_relu,
+        critic = tf.layers.dense(inputs, 32, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="critic_hidden_1")
-        critic = tf.layers.dense(critic, 32, activation=tf.nn.leaky_relu,
+        critic = tf.layers.dense(critic, 16, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="critic_hidden_2")
@@ -93,11 +93,11 @@ def critic(inputs):
 
 def actor(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        actor = tf.layers.dense(inputs, 64, activation=tf.nn.leaky_relu,
+        actor = tf.layers.dense(inputs, 32, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="actor_hidden_1")
-        actor = tf.layers.dense(actor, 32, activation=tf.nn.leaky_relu,
+        actor = tf.layers.dense(actor, 16, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="actor_hidden_2")
@@ -356,22 +356,24 @@ class AgentGroupJ:
                         break
     
                     action = self.sample_action(possible_boards)
-                    old_board, new_board, reward, done = env.step(possible_moves[action])
+                    old_board, new_board, reward, done = env.step(possible_moves[action], player = 1)
     
                     if done:
                         break
     
                 if not done:
+                    #env.swap_player()
                     dice = B.roll_dice()
     
                     for __ in range(1 + int(dice[0] == dice[1])):
-                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = 1)
-                            old_board, new_board, reward, done = env.step(action, player = 1)
+                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = -1)
+                            old_board, new_board, reward, done = env.step(action, player = -1)
                             if B.check_for_error(env.board):
                                 PubEvalErBilað
                             if done:
                                 reward = 0
                                 break
+            #env.swap_player()
             wins.append(float(reward == 1))
         
         return(np.mean(wins))

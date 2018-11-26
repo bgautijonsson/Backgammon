@@ -25,13 +25,13 @@ def israce(board):
 
 # convert to Tesauro's layout
 def pubeval_flip(board):
-    board[[0,26]] = -board[[26,27]]
+    board[[0,26]] = board[[26,27]]
     board[27] = board[28]
     board = board[:-1]
     return board
 
 def agent_pubeval(board, dice, oplayer, nRoll = 0):
-    flipped_player = 1
+    flipped_player = -1
     if (flipped_player == oplayer):
         board = flipped_agent.flip_board(np.copy(board))
         player = -flipped_player
