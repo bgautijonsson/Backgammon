@@ -6,11 +6,27 @@ Created on Thu Nov 22 09:39:56 2018
 @author: bgautijonsson
 """
 
-def actionj(board_copy, dice, player, i):
-    from GroupJ import AgentGroupJ
+import GroupJ
+import flipped_agent as FA
+import Backgammon as B
+import numpy as np
+import tensorflow as tf
+tf.reset_default_graph()
+AgentJ = GroupJ.AgentGroupJ()
+
+def action(board_copy, dice, player, i):
     
-    AgentJ = AgentGroupJ()
+    if player == -1:
+        board_copy = FA.flip_board(np.copy(board_copy))
+    possible_moves, possible_boards = B.legal_moves(board_copy, dice, 1)
     
-    possible_moves, possible_boards = AgentJ.legal_moves(board_copy, dice, player)
+    if len(possible_moves) == 0:
+        return []
     
-    return AgentJ.sample_action(possible_boards)
+    action = AgentJ.sample_action(np.vstack(possible_boards))
+    move = possible_moves[action]
+    if player == -1:
+        move = FA.flip_move(move)
+    return move
+
+
