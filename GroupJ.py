@@ -69,10 +69,6 @@ def network(inputs):
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_2")
-        #net = tf.layers.dense(net, 16, activation=tf.nn.leaky_relu,
-        #                      kernel_initializer=xavier_initializer(),
-        #                      kernel_regularizer=l2_regularizer(0.01),
-        #                      name="hidden_3")
         
     return net
 
@@ -110,10 +106,10 @@ class AgentGroupJ:
     
     def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.1, critic_weight = 0.8,
                  clip_norm = 20,
-                 read_file = True, save_path = "/AgentData/AC_Agent"):
+                 read_file = True, save_path = "AgentData"):
         
         self._gamma = gamma
-        self._iters = tf.Variable(0, dtype = tf.float32, trainable = False)
+        self._iters = tf.Variable(0, dtype = tf.float32, trainable = False, name = "iters")
         self._path = save_path
         
         self._currstate = tf.placeholder("float32", (None, 29), name = "CurrentStates")
@@ -121,7 +117,6 @@ class AgentGroupJ:
         self._afterstate = tf.placeholder("float32", (None, 29), name = "AfterStates")
         self._is_terminal = tf.placeholder("float32", (), name = "IsTerminal")
         self._reward = tf.placeholder("float32", (), name = "Rewards")
-        #self._action = tf.placeholder("int32", (), name = "Action")
         self._action = tf.placeholder("float32", (None, ), name = "Action")
         
         # Network
@@ -132,42 +127,40 @@ class AgentGroupJ:
 
         # Predictions
         ## Critic
-        self._current_state_value = self._critic(self._network(self._currstate))
-        self._afterstate_value = self._critic(self._network(self._afterstate)) * (1 - self._is_terminal)
-
-        self._target_state_value = self._reward + self._gamma * self._afterstate_value * (1 - self._is_terminal)
-
-        self._advantage = tf.stop_gradient(self._target_state_value) - self._current_state_value
-
-        ## Actor
-        self._actor_logits = self._actor(self._network(self._possible_states))
-        self._actor_policy = tf.nn.softmax(self._actor_logits, axis = 0)
-        self._actor_log_policy = tf.nn.log_softmax(self._actor_logits, axis = 0)
-        self._actor_entropy = -tf.reduce_mean(self._actor_policy * self._actor_log_policy)
-        
-        self._critic_loss = tf.reduce_mean(tf.square(self._advantage))
-        
-        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * tf.stop_gradient(self._action) * self._actor_log_policy)
-
-        self._loss = self._actor_loss + critic_weight * self._critic_loss - entropy * self._actor_entropy
-        
-        self._clip_norm = clip_norm
-        self._optimizer = tf.train.AdamOptimizer(learning_rate)
-        self._update = self._optimizer.minimize(self._loss, global_step = self._iters)
-        #self._grads = self._optimizer.compute_gradients(self._loss)
-        #self._capped_grads = [(tf.clip_by_norm(grad, self._clip_norm), var) for grad, var in self._grads]
-        #self._update = self._optimizer.apply_gradients(self._capped_grads, global_step = self._iters)
+        with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
+            self._current_state_value = self._critic(self._network(self._currstate))
+            self._afterstate_value = self._critic(self._network(self._afterstate)) * (1 - self._is_terminal)
+    
+            self._target_state_value = self._reward + self._gamma * self._afterstate_value * (1 - self._is_terminal)
+    
+            self._advantage = tf.stop_gradient(self._target_state_value) - self._current_state_value
+    
+            ## Actor
+            self._actor_logits = self._actor(self._network(self._possible_states))
+            self._actor_policy = tf.nn.softmax(self._actor_logits, axis = 0)
+            self._actor_log_policy = tf.nn.log_softmax(self._actor_logits, axis = 0)
+            self._actor_entropy = -tf.reduce_mean(self._actor_policy * self._actor_log_policy)
+            
+            self._critic_loss = tf.reduce_mean(tf.square(self._advantage))
+            
+            self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * tf.stop_gradient(self._action) * self._actor_log_policy)
+    
+            self._loss = self._actor_loss + critic_weight * self._critic_loss - entropy * self._actor_entropy
+            
+            self._clip_norm = clip_norm
+            self._optimizer = tf.train.AdamOptimizer(learning_rate)
+            self._update = self._optimizer.minimize(self._loss, global_step = self._iters)
         
         
         
-        self._winrate_lookbehind = tf.Variable(100, dtype = tf.float32, trainable = False)
+        self._winrate_lookbehind = tf.Variable(100, dtype = tf.float32, trainable = False, name = "winrate_lookbehind")
         
-        self._meanwinrate_random = tf.Variable(0, dtype = tf.float32, trainable = False)
+        self._meanwinrate_random = tf.Variable(0, dtype = tf.float32, trainable = False, name = "meanwinrate_random")
         self._iswin_random = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin_random")
         self._winrate_random = self._meanwinrate_random + (self._iswin_random - self._meanwinrate_random) / self._winrate_lookbehind
         self._track_random = tf.summary.scalar('Win_rate_Random', self._winrate_random)
         
-        self._meanwinrate_pubeval = tf.Variable(0, dtype = tf.float32, trainable = False)
+        self._meanwinrate_pubeval = tf.Variable(0, dtype = tf.float32, trainable = False, name = "meanwinrate_pubeval")
         self._iswin_pubeval = tf.placeholder(dtype = tf.float32, shape = (), name = "IsWin_pubeval")
         self._winrate_pubeval = self._meanwinrate_pubeval + (self._iswin_pubeval - self._meanwinrate_pubeval) / self._winrate_lookbehind
         self._track_pubeval = tf.summary.scalar('Win_rate_Pubeval', self._winrate_pubeval)
@@ -189,9 +182,9 @@ class AgentGroupJ:
         
         self._saver = tf.train.Saver()
         
-        if os.path.isfile(self._path + ".index") and read_file:
-            self._saver = tf.train.import_meta_graph(self._path)
-            self._saver.restore(self._s)
+        if os.path.isfile(self._path + "/AC_Agent.meta") and read_file:
+            self._saver = tf.train.import_meta_graph(self._path + "/AC_Agent.meta")
+            self._saver.restore(self._s, self._path + "/AC_Agent")
             
     def __delete__(self):
         self._s.close()    
@@ -258,7 +251,7 @@ class AgentGroupJ:
     
         self._file_writer.add_summary(summary, gstep)
         
-        if (gstep % 1000) == 0:
+        if (gstep % 10000) == 0:
             self.save_network()
         
     def get_cumulative_rewards(self, rewards):
@@ -279,7 +272,7 @@ class AgentGroupJ:
         return(str(self._network.summary()))
     
     def save_network(self):
-        self._saver.save(self._s, "." + self._path)
+        self._saver.save(self._s, "./" + self._path + "/AC_Agent")
         
     def legal_moves(self, board, dice, player):
         if player == -1:
