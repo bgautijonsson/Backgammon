@@ -61,37 +61,46 @@ class backgammon:
 
 def network(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        net = tf.layers.dense(inputs, 32, activation=tf.nn.leaky_relu,
+        net = tf.layers.dense(inputs, 256, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_1")
-        net = tf.layers.dense(net, 64, activation=tf.nn.leaky_relu,
+        net = tf.layers.dense(net, 128, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="hidden_2")
-        net = tf.layers.dense(net, 32, activation=tf.nn.leaky_relu,
-                              kernel_initializer=xavier_initializer(),
-                              kernel_regularizer=l2_regularizer(0.01),
-                              name="hidden_3")
+        #net = tf.layers.dense(net, 16, activation=tf.nn.leaky_relu,
+        #                      kernel_initializer=xavier_initializer(),
+        #                      kernel_regularizer=l2_regularizer(0.01),
+        #                      name="hidden_3")
         
     return net
 
 def critic(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        critic = tf.layers.dense(inputs, 16, activation=tf.nn.leaky_relu,
+        critic = tf.layers.dense(inputs, 64, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="critic_hidden_1")
-        critic = tf.layers.dense(critic, 1, name="critic_out")
+        critic = tf.layers.dense(critic, 32, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="critic_hidden_2")
+        critic = tf.layers.dense(critic, 1, activation = tf.nn.tanh,
+                                 name="critic_out")
         
     return critic
 
 def actor(inputs):
     with tf.variable_scope('Shared', reuse=tf.AUTO_REUSE):
-        actor = tf.layers.dense(inputs, 16, activation=tf.nn.leaky_relu,
+        actor = tf.layers.dense(inputs, 64, activation=tf.nn.leaky_relu,
                               kernel_initializer=xavier_initializer(),
                               kernel_regularizer=l2_regularizer(0.01),
                               name="actor_hidden_1")
+        actor = tf.layers.dense(actor, 32, activation=tf.nn.leaky_relu,
+                              kernel_initializer=xavier_initializer(),
+                              kernel_regularizer=l2_regularizer(0.01),
+                              name="actor_hidden_2")
         actor = tf.layers.dense(actor, 1, name="actor_out")
         
     return actor
@@ -100,6 +109,7 @@ def actor(inputs):
 class AgentGroupJ:
     
     def __init__(self, gamma = 0.99, learning_rate = 0.001, entropy = 0.1, critic_weight = 0.8,
+                 clip_norm = 20,
                  read_file = True, save_path = "/AgentData/AC_Agent"):
         
         self._gamma = gamma
@@ -111,6 +121,7 @@ class AgentGroupJ:
         self._afterstate = tf.placeholder("float32", (None, 29), name = "AfterStates")
         self._is_terminal = tf.placeholder("float32", (), name = "IsTerminal")
         self._reward = tf.placeholder("float32", (), name = "Rewards")
+        #self._action = tf.placeholder("int32", (), name = "Action")
         self._action = tf.placeholder("float32", (None, ), name = "Action")
         
         # Network
@@ -126,7 +137,7 @@ class AgentGroupJ:
 
         self._target_state_value = self._reward + self._gamma * self._afterstate_value * (1 - self._is_terminal)
 
-        self._advantage = self._target_state_value - self._current_state_value
+        self._advantage = tf.stop_gradient(self._target_state_value) - self._current_state_value
 
         ## Actor
         self._actor_logits = self._actor(self._network(self._possible_states))
@@ -134,20 +145,18 @@ class AgentGroupJ:
         self._actor_log_policy = tf.nn.log_softmax(self._actor_logits, axis = 0)
         self._actor_entropy = -tf.reduce_mean(self._actor_policy * self._actor_log_policy)
         
-        # Losses
-        self._critic_loss = tf.reduce_mean(tf.square((tf.stop_gradient(self._target_state_value) - self._current_state_value)))
-        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * self._action * self._actor_log_policy)
+        self._critic_loss = tf.reduce_mean(tf.square(self._advantage))
+        
+        self._actor_loss = -tf.reduce_mean(tf.stop_gradient(self._advantage) * tf.stop_gradient(self._action) * self._actor_log_policy)
 
         self._loss = self._actor_loss + critic_weight * self._critic_loss - entropy * self._actor_entropy
-        self._weights = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='Shared')
         
-        self._grads = tf.gradients(self._loss, self._weights)
-        self._grads, _ = tf.clip_by_global_norm(self._grads, 40.0)
-        self._grads_vars = list(zip(self._grads, self._weights))
-
-
+        self._clip_norm = clip_norm
         self._optimizer = tf.train.AdamOptimizer(learning_rate)
-        self._update = self._optimizer.apply_gradients(self._grads_vars, global_step = self._iters)
+        self._update = self._optimizer.minimize(self._loss, global_step = self._iters)
+        #self._grads = self._optimizer.compute_gradients(self._loss)
+        #self._capped_grads = [(tf.clip_by_norm(grad, self._clip_norm), var) for grad, var in self._grads]
+        #self._update = self._optimizer.apply_gradients(self._capped_grads, global_step = self._iters)
         
         
         
@@ -188,11 +197,51 @@ class AgentGroupJ:
         self._s.close()    
         
     def sample_action(self, afterstates):
+        #f = np.array([self.get_features(a) for a in afterstates])
         probs = self._s.run(self._actor_policy, ({self._possible_states: afterstates})).flatten()
         
         action = np.random.choice(np.arange(len(probs)), p = probs)
         
         return action
+    
+    def get_features(self, board, player = 1):
+        f = np.zeros(198)
+    
+        # define features for points on board
+        p = 0
+        for i in range(1,25):
+            point = board[i]
+            #print('point:', point)
+            #print('p: ', p)
+            if (point != 0):
+                #print('Not 0')
+                if(point > 0):
+                    if (point == 1):
+                        f[p] = 1
+                    elif (point == 2):
+                        f[p+1] = 1
+                    elif (point == 3):
+                        f[p+2] = 1
+                    else:
+                        f[p+3] = (point-3)/2
+                else:
+                    if (point == -1):
+                        f[p+4] == 1
+                    elif (point == -2):
+                        f[p+5] = 1
+                    elif (point == -3):
+                        f[p+6] = 1
+                    else:
+                        f[p+7] = (-point-3)/2
+            p += 8
+    
+        f[192] = board[25]/2
+        f[193] = board[26]/2
+        f[194] = board[27]/15
+        f[195] = board[28]/15
+        f[196] = int(player == 1)
+        f[197] = int(player == -1)
+        return f
         
     
     def update(self, currstate, possible_states, afterstate, reward, action, is_terminal):
@@ -316,8 +365,10 @@ class AgentGroupJ:
                     dice = B.roll_dice()
     
                     for __ in range(1 + int(dice[0] == dice[1])):
-                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = -1)
-                            old_board, new_board, reward, done = env.step(action, player = -1)
+                            action = pubeval.agent_pubeval(np.copy(env.board), dice, oplayer = 1)
+                            old_board, new_board, reward, done = env.step(action, player = 1)
+                            if B.check_for_error(env.board):
+                                PubEvalErBilað
                             if done:
                                 reward = 0
                                 break
@@ -354,13 +405,17 @@ class AgentGroupJ:
                     action = self.sample_action(possible_boards)
                     old_board, new_board, reward, done = envs[i].step(possible_moves[action], player = 1)
                     
+                    #CurrState = self.get_features(old_board).reshape(1, 198)
                     CurrState = old_board.reshape(1, 29)
+                    #AfterState = self.get_features(new_board).reshape(1, 198)
                     AfterState = new_board.reshape(1, 29)
+                    #PossibleStates = np.vstack([self.get_features(p) for p in possible_boards])
                     PossibleStates = possible_boards
                     Reward = reward
-                    IsTerminal = done
+                    IsTerminal = np.round(done)
                     Action = np.zeros(n_actions)
                     Action[action] = 1
+                    #Action = np.array(action).astype(int)
                     
                     self.update(currstate = CurrState, 
                                 afterstate = AfterState, 
@@ -369,13 +424,17 @@ class AgentGroupJ:
                                 action = Action,
                                 is_terminal = IsTerminal)
                     if not done:
+                        #CurrState_loser[i] = self.get_features(old_board).reshape(1, 198)
                         CurrState_loser[i] = old_board.reshape(1, 29)
+                        #AfterState_loser[i] = self.get_features(new_board).reshape(1, 198)
                         AfterState_loser[i] = new_board.reshape(1, 29)
+                        #PossibleStates_loser[i] = np.vstack([self.get_features(p) for p in possible_boards])
                         PossibleStates_loser[i] = possible_boards
                         Reward_loser[i] = -1
                         IsTerminal_loser[i] = 1
                         Action_loser[i] = np.zeros(n_actions)
                         Action_loser[i][action] = 1
+                        #Action_loser[i] = np.array(action).astype(int)
                         
                     else:
                         self.update(currstate = CurrState_loser[i], 
